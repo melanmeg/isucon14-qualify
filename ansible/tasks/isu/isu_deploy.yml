@@ -1,0 +1,65 @@
+- name: set git pull rebase
+  shell: git config --global pull.rebase true
+  ignore_errors: true
+
+- name: "{{ SERVICE_NAME }} is running"
+  become: yes
+  systemd:
+    name: "{{ SERVICE_NAME }}"
+    state: started
+    enabled: true
+
+- name: Pull latest code from Git repository
+  become: no
+  git:
+    repo: "{{ GIT_REPOSITORY_URL }}"
+    dest: "{{ ISUCON_DIR }}"
+    version: "main"
+    force: true
+
+- name: setup
+  become: no
+  shell: make
+  args:
+    chdir: "{{ BUILD_DIR }}"
+  ignore_errors: true
+
+- name: "{{ SERVICE_NAME }} is restarted"
+  become: yes
+  systemd:
+    name: "{{ SERVICE_NAME }}"
+    state: restarted
+
+- name: remove
+  become: yes
+  file:
+    path: /var/log/nginx/access.log
+    state: absent
+
+- name: nginx is restarted
+  become: yes
+  systemd:
+    name: nginx
+    state: restarted
+
+- name: remove
+  become: yes
+  file:
+    path: /var/log/mysql/mysql-slow.sql
+    state: absent
+
+#- name: chmod
+#  file:
+#    path: "{{ ISUCON_DIR }}/webapp/sql/init.sh"
+#    mode: '0755'
+#  ignore_errors: yes
+
+#- name: shell
+#  shell: "sh {{ ISUCON_DIR }}/webapp/sql/init.sh"
+#  ignore_errors: yes
+
+- name: mysql is restarted
+  become: yes
+  systemd:
+    name: mysql
+    state: restarted

@@ -1,0 +1,5 @@
+- name: Install the package
+  apt:
+    name:
+      - graphviz
+      - gv

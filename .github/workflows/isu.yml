@@ -1,0 +1,25 @@
+name: "isu"
+on:
+  workflow_dispatch:
+jobs:
+  Ansible1:
+    name: "Ansible1 Job"
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v3
+      - name: Run playbook
+        uses: dawidd6/action-ansible-playbook@v2
+        with:
+          playbook: playbook.yml
+          directory: ./ansible
+          key: ${{ secrets.SSH_PRIVATE_KEY }}
+          inventory: |
+            [isucon]
+            isu1 ansible_host=${{ vars.HOST1 }}
+            isu2 ansible_host=${{ vars.HOST2 }}
+            isu3 ansible_host=${{ vars.HOST3 }}
+          options: |
+            --inventory .hosts
