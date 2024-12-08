@@ -6,7 +6,7 @@
 - name: fetch nginx
   ansible.builtin.fetch:
     src: "/tmp/nginx.tar.gz"
-    dest: "../files/fetch/nginx.tar.gz"
+    dest: "./files/fetch/nginx.tar.gz"
     flat: true
   ignore_errors: true
 
@@ -18,7 +18,7 @@
 - name: fetch mysql
   ansible.builtin.fetch:
     src: "/tmp/mysql.tar.gz"
-    dest: "../files/fetch/mysql.tar.gz"
+    dest: "./files/fetch/mysql.tar.gz"
     flat: true
   ignore_errors: true
 
@@ -30,6 +30,6 @@
 - name: fetch service
   ansible.builtin.fetch:
     src: "/tmp/service.tar.gz"
-    dest: "../files/fetch/service.tar.gz"
+    dest: "./files/fetch/service.tar.gz"
     flat: true
   ignore_errors: true
