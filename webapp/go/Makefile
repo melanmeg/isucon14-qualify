@@ -4,14 +4,14 @@ all: deploy
 
 USER:=isucon
 GIT_DIR:=/home/isucon
-BUILD_DIR:=$(GIT_DIR)/webapp/golang
-SERVICE_NAME:=isu-go.service
+BUILD_DIR:=$(GIT_DIR)/webapp/go
+SERVICE_NAME:=isuride-go.service
 
 ISUCON_DB_HOST:=127.0.0.1  # localhostだとbindしないので注意
 ISUCON_DB_PORT:=3306
-ISUCON_DB_NAME:=isuconp
-ISUCON_DB_USER:=isuconp
-ISUCON_DB_PASSWORD:=isuconp
+ISUCON_DB_NAME:=isuride
+ISUCON_DB_USER:=isucon
+ISUCON_DB_PASSWORD:=isucon
 
 NGINX_LOG:=/var/log/nginx/access.log
 DB_SLOW_LOG:=/var/log/mysql/mysql-slow.log
@@ -23,7 +23,7 @@ DB_SLOW_LOG:=/var/log/mysql/mysql-slow.log
 deploy:
 	git pull
 	# go build
-	make -C $(BUILD_DIR)
+	go build -o isuride
 	sudo systemctl restart $(SERVICE_NAME)
 	# nginx
 	sudo rm -f $(NGINX_LOG)
