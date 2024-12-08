@@ -12,36 +12,48 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-sql-driver/mysql"
 	"github.com/jmoiron/sqlx"
+	"github.com/kaz/pprotein/integration/standalone"
 )
 
 var db *sqlx.DB
 
 func main() {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	// HTTPルータを初期化
+	mux := setup()
 
-	// キャッシュ初期化
+	// DBが初期化されたことを確認
+	if db == nil {
+		slog.Error("Database connection is not initialized")
+		os.Exit(1)
+	}
+
+	// 初期化処理
+	ctx := context.Background() // コンテキストを作成
 	if err := initializeChairCache(ctx); err != nil {
 		slog.Error("Failed to initialize chair cache", "error", err)
 		os.Exit(1)
 	}
 
-	// キャッシュ再構築タスクを開始
-	go startCacheRebuildTask(ctx)
-
-	mux := setup()
+	// pproteinデバッグサーバーを起動
+	go func() {
+		slog.Info("Starting pprotein debug server on :6060")
+		standalone.Integrate(":6060")
+	}()
 
 	slog.Info("Listening on :8080")
 	http.ListenAndServe(":8080", mux)
 }
 
 func initializeChairCache(ctx context.Context) error {
+	if db == nil {
+		return fmt.Errorf("database is not initialized")
+	}
+
 	rows, err := db.QueryContext(ctx, "SELECT id, is_active FROM chairs WHERE is_active = TRUE")
 	if err != nil {
 		return err
@@ -59,46 +71,6 @@ func initializeChairCache(ctx context.Context) error {
 		}
 		chairCache.cache[chair.ID] = chair
 	}
-	slog.Info("Chair cache initialized successfully")
-	return nil
-}
-
-func startCacheRebuildTask(ctx context.Context) {
-	ticker := time.NewTicker(5 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if err := rebuildChairCache(ctx); err != nil {
-				slog.Error("Failed to rebuild chair cache", "error", err)
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
-}
-
-func rebuildChairCache(ctx context.Context) error {
-	rows, err := db.QueryContext(ctx, "SELECT id, is_active FROM chairs WHERE is_active = TRUE")
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	chairCache.mu.Lock()
-	defer chairCache.mu.Unlock()
-
-	chairCache.cache = make(map[string]Chair)
-	for rows.Next() {
-		var chair Chair
-		if err := rows.Scan(&chair.ID, &chair.IsActive); err != nil {
-			return err
-		}
-		chairCache.cache[chair.ID] = chair
-	}
-
-	slog.Info("Chair cache rebuilt successfully")
 	return nil
 }
 
