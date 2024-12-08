@@ -39,7 +39,7 @@ func pickChair(chairs []Chair, ride *Ride) Chair {
 
 	for _, chair := range chairs {
 		// 評価関数
-		score := chair.Speed - abs(ride.PickupLatitude-chair.Latitude) - abs(ride.PickupLongitude-chair.Longitude)
+		score := -abs(ride.PickupLatitude-chair.Latitude) - abs(ride.PickupLongitude-chair.Longitude)
 		if score > bestScore {
 			bestScore = score
 			bestChair = chair
