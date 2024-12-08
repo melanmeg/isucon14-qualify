@@ -5,13 +5,11 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"fmt"
-	"log/slog"
 	"net/http"
 )
 
 // 利用可能な椅子をキャッシュから取得
-func getAvailableChairsFromCache(ctx context.Context) ([]Chair, error) {
+func getAvailableChairsFromCache() ([]Chair, error) {
 	chairCache.mu.RLock()
 	defer chairCache.mu.RUnlock()
 
@@ -25,16 +23,37 @@ func getAvailableChairsFromCache(ctx context.Context) ([]Chair, error) {
 }
 
 // キャッシュを更新
-func updateChairCache(ctx context.Context, chairID string, isAvailable bool) error {
+func updateChairCache(chairID string, isAvailable bool) {
 	chairCache.mu.Lock()
 	defer chairCache.mu.Unlock()
 
-	if chair, ok := chairCache.cache[chairID]; ok {
+	if chair, exists := chairCache.cache[chairID]; exists {
 		chair.IsActive = isAvailable
 		chairCache.cache[chairID] = chair
-		return nil
 	}
-	return fmt.Errorf("Chair not found in cache: %s", chairID)
+}
+
+// キャッシュの再構築（主に初期化や大規模更新用）
+func rebuildChairCache(ctx context.Context) error {
+	rows, err := db.QueryContext(ctx, "SELECT id, is_active, owner_id, name, model, created_at, updated_at FROM chairs")
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	newCache := make(map[string]Chair)
+	for rows.Next() {
+		var chair Chair
+		if err := rows.Scan(&chair.ID, &chair.IsActive, &chair.OwnerID, &chair.Name, &chair.Model, &chair.CreatedAt, &chair.UpdatedAt); err != nil {
+			return err
+		}
+		newCache[chair.ID] = chair
+	}
+
+	chairCache.mu.Lock()
+	defer chairCache.mu.Unlock()
+	chairCache.cache = newCache
+	return nil
 }
 
 // 内部マッチング処理
@@ -52,37 +71,42 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 利用可能な椅子をキャッシュから取得
-	chairs, err := getAvailableChairsFromCache(ctx)
+	// キャッシュから利用可能な椅子を取得
+	availableChairs, err := getAvailableChairsFromCache()
 	if err != nil {
-		slog.Error("Failed to get chairs from cache", "error", err)
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	if len(chairs) == 0 {
-		slog.Warn("No available chairs found")
+	if len(availableChairs) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	// 最初の椅子を選択
-	selectedChair := chairs[0]
+	// 最初の利用可能な椅子を選択
+	selectedChair := availableChairs[0]
 
-	// ライドに椅子をアサイン
-	if _, err := db.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", selectedChair.ID, ride.ID); err != nil {
-		slog.Error("Failed to assign chair to ride", "ride_id", ride.ID, "chair_id", selectedChair.ID, "error", err)
+	// データベース内でライドに椅子をアサイン
+	tx, err := db.Beginx()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", selectedChair.ID, ride.ID)
+	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	// キッシュを更新
-	if err := updateChairCache(ctx, selectedChair.ID, false); err != nil {
-		slog.Error("Failed to update chair cache", "chair_id", selectedChair.ID, "error", err)
+	// キャッシュを更新
+	updateChairCache(selectedChair.ID, false)
+
+	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	slog.Info("Successfully matched chair to ride", "ride_id", ride.ID, "chair_id", selectedChair.ID)
 	w.WriteHeader(http.StatusNoContent)
 }

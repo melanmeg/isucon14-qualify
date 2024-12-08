@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -23,7 +24,6 @@ import (
 var db *sqlx.DB
 
 func main() {
-	// HTTPルータを初期化
 	mux := setup()
 
 	// DBが初期化されたことを確認
@@ -33,11 +33,22 @@ func main() {
 	}
 
 	// 初期化処理
-	ctx := context.Background() // コンテキストを作成
+	ctx := context.Background()
 	if err := initializeChairCache(ctx); err != nil {
 		slog.Error("Failed to initialize chair cache", "error", err)
 		os.Exit(1)
 	}
+
+	// キャッシュを定期的に更新
+	go func() {
+		ticker := time.NewTicker(1 * time.Minute)
+		defer ticker.Stop()
+		for range ticker.C {
+			if err := initializeChairCache(ctx); err != nil {
+				slog.Error("Failed to update chair cache", "error", err)
+			}
+		}
+	}()
 
 	// pproteinデバッグサーバーを起動
 	go func() {
