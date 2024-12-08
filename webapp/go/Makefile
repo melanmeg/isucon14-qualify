@@ -29,6 +29,7 @@ deploy:
 	sudo rm -f $(NGINX_LOG)
 	sudo systemctl restart nginx
 	# mysql
+	~/webapp/sql/init.sh
 	sudo rm -f $(DB_SLOW_LOG)
 	sudo systemctl restart mysql
 
