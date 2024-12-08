@@ -5,7 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"log"
+	"fmt"
 	"net/http"
 )
 
@@ -65,13 +65,13 @@ func getAvailableChairs() ([]Chair, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	log.Printf("rows: %+v", rows)
+	fmt.Printf("rows: %+v", rows)
 
 	availableChairs := []Chair{}
 	for rows.Next() {
 		var chair Chair
 		if err := rows.Scan(&chair.ID, &chair.Speed, &chair.Latituide, &chair.Longtitude); err != nil {
-			log.Printf("chair: %+v", chair)
+			fmt.Printf("chair: %+v", chair)
 			return nil, err
 		}
 		availableChairs = append(availableChairs, chair)
