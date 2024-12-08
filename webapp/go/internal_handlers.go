@@ -1,10 +1,11 @@
-/internalGetMatching/ webapp/go/internal_handlers.go
+// webapp/go/internal_handlers.go
 package main
 
 import (
 	"context"
 	"database/sql"
 	"errors"
+	"log/slog"
 	"net/http"
 )
 
