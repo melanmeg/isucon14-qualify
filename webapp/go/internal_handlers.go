@@ -84,7 +84,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 利用可能な椅子がライドよりも少ない場合は何もしない
-	if len(chairs)-matchingRideCount > 0 {
+	if len(chairs)-matchingRideCount < 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
