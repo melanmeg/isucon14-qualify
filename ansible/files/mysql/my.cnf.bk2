@@ -1,0 +1,13 @@
+[mysqld]
+slow_query_log = 1
+slow_query_log-file = /var/log/mysql/mysql-slow.log
+long_query_time = 0
+
+# ネットワーク許可
+bind-address        = 0.0.0.0
+mysqlx-bind-address = 0.0.0.0
+
+# クライアント設定
+[client]
+user = isucon
+password = isucon
