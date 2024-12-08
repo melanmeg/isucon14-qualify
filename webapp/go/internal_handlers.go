@@ -2,15 +2,44 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"net/http"
 )
 
-// このAPIをインスタンス内から一定間隔で叩かせることで、椅子とライドをマッチングさせる
+// 利用可能な椅子をキャッシュから取得
+func getAvailableChairsFromCache(ctx context.Context) ([]Chair, error) {
+	chairCache.mu.RLock()
+	defer chairCache.mu.RUnlock()
+
+	availableChairs := []Chair{}
+	for _, chair := range chairCache.cache {
+		if chair.IsActive {
+			availableChairs = append(availableChairs, chair)
+		}
+	}
+	return availableChairs, nil
+}
+
+// キャッシュを更新
+func updateChairCache(ctx context.Context, chairID string, isAvailable bool) error {
+	chairCache.mu.Lock()
+	defer chairCache.mu.Unlock()
+
+	if chair, found := chairCache.cache[chairID]; found {
+		chair.IsActive = isAvailable
+		chairCache.cache[chairID] = chair
+		return nil
+	}
+	return errors.New("chair not found in cache")
+}
+
+// 内部マッチング処理
 func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	// MEMO: 一旦最も待たせているリクエストに適当な空いている椅子マッチさせる実装とする。おそらくもっといい方法があるはず…
+
+	// 未マッチングのライドを取得
 	ride := &Ride{}
 	if err := db.GetContext(ctx, ride, `SELECT * FROM rides WHERE chair_id IS NULL ORDER BY created_at LIMIT 1`); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -21,31 +50,29 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	matched := &Chair{}
-	empty := false
-	for i := 0; i < 10; i++ {
-		if err := db.GetContext(ctx, matched, "SELECT * FROM chairs INNER JOIN (SELECT id FROM chairs WHERE is_active = TRUE ORDER BY RAND() LIMIT 1) AS tmp ON chairs.id = tmp.id LIMIT 1"); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err)
-		}
-
-		if err := db.GetContext(ctx, &empty, "SELECT COUNT(*) = 0 FROM (SELECT COUNT(chair_sent_at) = 6 AS completed FROM ride_statuses WHERE ride_id IN (SELECT id FROM rides WHERE chair_id = ?) GROUP BY ride_id) is_completed WHERE completed = FALSE", matched.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if empty {
-			break
-		}
+	// 利用可能な椅子をキャッシュから取得
+	chairs, err := getAvailableChairsFromCache(ctx)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
 	}
-	if !empty {
+
+	if len(chairs) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	if _, err := db.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", matched.ID, ride.ID); err != nil {
+	// 最初の椅子を選択
+	selectedChair := chairs[0]
+
+	// ライドに椅子をアサイン
+	if _, err := db.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", selectedChair.ID, ride.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// キャッシュを更新
+	if err := updateChairCache(ctx, selectedChair.ID, false); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}

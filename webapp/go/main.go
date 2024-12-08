@@ -26,6 +26,16 @@ func main() {
 	http.ListenAndServe(":8080", mux)
 }
 
+func initializeChairCache() {
+	chairs := []Chair{}
+	if err := db.Select(&chairs, `SELECT * FROM chairs WHERE is_active = TRUE`); err != nil {
+		panic(err)
+	}
+	for _, chair := range chairs {
+		chairCache.Store(chair.ID, chair)
+	}
+}
+
 func setup() http.Handler {
 	host := os.Getenv("ISUCON_DB_HOST")
 	if host == "" {
@@ -109,7 +119,7 @@ func setup() http.Handler {
 	{
 		mux.HandleFunc("GET /api/internal/matching", internalGetMatching)
 	}
-
+	go initializeChairCache() // キャッシュの初期化
 	return mux
 }
 
