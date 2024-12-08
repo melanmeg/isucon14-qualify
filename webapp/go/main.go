@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
@@ -22,8 +23,19 @@ var db *sqlx.DB
 
 func main() {
 	mux := setup()
+
+	srv := &http.Server{
+		Handler:      mux,
+		Addr:         ":8080",
+		ReadTimeout:  15 * time.Second,
+		WriteTimeout: 15 * time.Second,
+		IdleTimeout:  60 * time.Second,
+	}
+
 	slog.Info("Listening on :8080")
-	http.ListenAndServe(":8080", mux)
+	if err := srv.ListenAndServe(); err != nil {
+		slog.Error("Failed to start server", "error", err)
+	}
 }
 
 func setup() http.Handler {
@@ -59,16 +71,36 @@ func setup() http.Handler {
 	dbConfig.Net = "tcp"
 	dbConfig.DBName = dbname
 	dbConfig.ParseTime = true
+	dbConfig.Collation = "utf8mb4_general_ci"
+	dbConfig.InterpolateParams = true
+	dbConfig.MaxAllowedPacket = 32 << 20 // 32MB
+	dbConfig.Params = map[string]string{
+		"charset": "utf8mb4",
+	}
 
 	_db, err := sqlx.Connect("mysql", dbConfig.FormatDSN())
 	if err != nil {
 		panic(err)
 	}
+
+	// コネクションプールの設定
+	_db.SetMaxOpenConns(25)
+	_db.SetMaxIdleConns(25)
+	_db.SetConnMaxLifetime(5 * time.Minute)
+	_db.SetConnMaxIdleTime(2 * time.Minute)
+
 	db = _db
 
 	mux := chi.NewRouter()
 	mux.Use(middleware.Logger)
 	mux.Use(middleware.Recoverer)
+	mux.Use(middleware.Timeout(30 * time.Second))
+
+	// ヘルスチェックエンポイント
+	mux.Get("/health", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
 	mux.HandleFunc("POST /api/initialize", postInitialize)
 
 	// app handlers
@@ -113,6 +145,7 @@ func setup() http.Handler {
 	return mux
 }
 
+// 既存の関数は変更なし
 type postInitializeRequest struct {
 	PaymentServer string `json:"payment_server"`
 }
