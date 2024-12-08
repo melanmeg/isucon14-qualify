@@ -823,57 +823,40 @@ func appGetNotification(w http.ResponseWriter, r *http.Request) {
 func getChairStats(ctx context.Context, tx *sqlx.Tx, chairID string) (appGetNotificationResponseChairStats, error) {
 	stats := appGetNotificationResponseChairStats{}
 
-	rides := []Ride{}
-	err := tx.SelectContext(
+	// 1回のクエリで必要なデータをすべて取得
+	var result struct {
+		TotalRides      int     `db:"total_rides"`
+		TotalEvaluation float64 `db:"total_evaluation"`
+	}
+
+	err := tx.GetContext(
 		ctx,
-		&rides,
-		`SELECT * FROM rides WHERE chair_id = ? ORDER BY updated_at DESC`,
+		&result,
+		`WITH completed_rides AS (
+			SELECT DISTINCT r.id, r.evaluation
+			FROM rides r
+			JOIN ride_statuses rs_completed ON r.id = rs_completed.ride_id
+			JOIN ride_statuses rs_arrived ON r.id = rs_arrived.ride_id
+			JOIN ride_statuses rs_carrying ON r.id = rs_carrying.ride_id
+			WHERE r.chair_id = ?
+			AND rs_completed.status = 'COMPLETED'
+			AND rs_arrived.status = 'ARRIVED'
+			AND rs_carrying.status = 'CARRYING'
+			AND r.evaluation IS NOT NULL
+		)
+		SELECT 
+			COUNT(*) as total_rides,
+			COALESCE(SUM(evaluation), 0) as total_evaluation
+		FROM completed_rides`,
 		chairID,
 	)
 	if err != nil {
 		return stats, err
 	}
 
-	totalRideCount := 0
-	totalEvaluation := 0.0
-	for _, ride := range rides {
-		rideStatuses := []RideStatus{}
-		err = tx.SelectContext(
-			ctx,
-			&rideStatuses,
-			`SELECT * FROM ride_statuses WHERE ride_id = ? ORDER BY created_at`,
-			ride.ID,
-		)
-		if err != nil {
-			return stats, err
-		}
-
-		var arrivedAt, pickupedAt *time.Time
-		var isCompleted bool
-		for _, status := range rideStatuses {
-			if status.Status == "ARRIVED" {
-				arrivedAt = &status.CreatedAt
-			} else if status.Status == "CARRYING" {
-				pickupedAt = &status.CreatedAt
-			}
-			if status.Status == "COMPLETED" {
-				isCompleted = true
-			}
-		}
-		if arrivedAt == nil || pickupedAt == nil {
-			continue
-		}
-		if !isCompleted {
-			continue
-		}
-
-		totalRideCount++
-		totalEvaluation += float64(*ride.Evaluation)
-	}
-
-	stats.TotalRidesCount = totalRideCount
-	if totalRideCount > 0 {
-		stats.TotalEvaluationAvg = totalEvaluation / float64(totalRideCount)
+	stats.TotalRidesCount = result.TotalRides
+	if result.TotalRides > 0 {
+		stats.TotalEvaluationAvg = result.TotalEvaluation / float64(result.TotalRides)
 	}
 
 	return stats, nil
