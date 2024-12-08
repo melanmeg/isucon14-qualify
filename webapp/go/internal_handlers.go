@@ -66,7 +66,6 @@ func getAvailableChairs() ([]Chair, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	slog.Debug(fmt.Sprintf("rows: %+v", rows))
 
 	availableChairs := []Chair{}
 	for rows.Next() {
