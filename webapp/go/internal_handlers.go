@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 )
 
@@ -65,17 +66,19 @@ func getAvailableChairs() ([]Chair, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	fmt.Printf("rows: %+v", rows)
+	slog.Debug(fmt.Sprintf("rows: %+v", rows))
 
 	availableChairs := []Chair{}
 	for rows.Next() {
 		var chair Chair
 		if err := rows.Scan(&chair.ID, &chair.Speed, &chair.Latituide, &chair.Longtitude); err != nil {
-			fmt.Printf("chair: %+v", chair)
+			slog.Debug(fmt.Sprintf("chair: %+v", chair))
 			return nil, err
 		}
+		slog.Debug(fmt.Sprintf("chair: %+v", chair))
 		availableChairs = append(availableChairs, chair)
 	}
+	slog.Debug(fmt.Sprintf("availableChairs: %+v", availableChairs))
 	return availableChairs, nil
 }
 
