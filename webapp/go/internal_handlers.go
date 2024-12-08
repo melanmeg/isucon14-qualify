@@ -119,6 +119,13 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
+	// 椅子を利用不可にする
+	_, err = tx.ExecContext(ctx, "UPDATE chairs SET is_active = FALSE WHERE id = ?", chairID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	_, err = tx.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", selectedChair.ID, ride.ID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
