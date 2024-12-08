@@ -8,7 +8,6 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
-	"time"
 )
 
 // キャッシュを使わずに利用可能な椅子を取得
@@ -34,7 +33,7 @@ func getAvailableChairs() ([]Chair, error) {
 	return availableChairs, nil
 }
 
-func pickChair(chairs []Chair, ride *Ride) Chair {
+func pickBestChair(chairs []Chair, ride *Ride) Chair {
 	bestScore := math.MinInt64
 	bestChair := Chair{}
 
@@ -48,6 +47,22 @@ func pickChair(chairs []Chair, ride *Ride) Chair {
 	}
 
 	return bestChair
+}
+
+func pickWorstChair(chairs []Chair, ride *Ride) Chair {
+	worstScore := math.MinInt64
+	worstChair := Chair{}
+
+	for _, chair := range chairs {
+		// 評価関数
+		score := -abs(ride.PickupLatitude-chair.Latitude) - abs(ride.PickupLongitude-chair.Longitude)
+		if score < worstScore {
+			worstScore = score
+			worstChair = chair
+		}
+	}
+
+	return worstChair
 }
 
 // このAPIをインスタンス内から一定間隔で叩かせることで、椅子とライドをマッチングさせる
@@ -84,12 +99,14 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
-	// 基本的に利用可能な椅子がライドよりも少ない場合は何もしないが、一定時間経過した場合はマッチングさせる
-	if len(chairs)-matchingRideCount < 0 && !ride.CreatedAt.Add(1*time.Second).After(time.Now()) {
-		w.WriteHeader(http.StatusNoContent)
-		return
+	var chair Chair
+
+	// 基本的に利用可能な椅子がライドよりもあまりにも少ない場合はカスみたいな椅子を提供する。
+	if len(chairs)-matchingRideCount < 5 {
+		chair = pickWorstChair(chairs, ride)
+	} else {
+		chair = pickBestChair(chairs, ride)
 	}
-	chair := pickChair(chairs, ride)
 
 	// データベース内でライドに椅子をアサイン
 	tx, err := db.Beginx()
