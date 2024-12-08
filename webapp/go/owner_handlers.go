@@ -128,89 +128,77 @@ func ownerGetSales(w http.ResponseWriter, r *http.Request) {
 		until = time.UnixMilli(parsed)
 	}
 
-	err := withTx(ctx, db, func(tx *sqlx.Tx) error {
-		// 1回のクエリで必要なデータを全て取得
-		type salesResult struct {
-			ChairID    string `db:"chair_id"`
-			ChairName  string `db:"chair_name"`
-			ChairModel string `db:"chair_model"`
-			PickupLat  int    `db:"pickup_lat"`
-			PickupLon  int    `db:"pickup_lon"`
-			DestLat    int    `db:"dest_lat"`
-			DestLon    int    `db:"dest_lon"`
+	tx, err := db.Beginx()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+	defer tx.Rollback()
+
+	chairs := []Chair{}
+	if err := tx.SelectContext(ctx, &chairs, "SELECT * FROM chairs WHERE owner_id = ?", owner.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	res := ownerGetSalesResponse{
+		TotalSales: 0,
+		Chairs:     []chairSales{},
+		Models:     []modelSales{},
+	}
+
+	modelSalesMap := make(map[string]int)
+	for _, chair := range chairs {
+		rides := []Ride{}
+		if err := tx.SelectContext(ctx, &rides, `
+            SELECT DISTINCT rides.* 
+            FROM rides 
+            JOIN ride_statuses ON rides.id = ride_statuses.ride_id 
+            WHERE chair_id = ? 
+            AND status = 'COMPLETED' 
+            AND rides.updated_at BETWEEN ? AND ?
+        `, chair.ID, since, until); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
 		}
 
-		sales := []salesResult{}
-		query := `
-			SELECT 
-				c.id as chair_id,
-				c.name as chair_name,
-				c.model as chair_model,
-				r.pickup_latitude as pickup_lat,
-				r.pickup_longitude as pickup_lon,
-				r.destination_latitude as dest_lat,
-				r.destination_longitude as dest_lon
-			FROM chairs c
-			LEFT JOIN rides r ON c.id = r.chair_id
-			LEFT JOIN ride_statuses rs ON r.id = rs.ride_id
-			WHERE c.owner_id = ?
-			AND (rs.status = 'COMPLETED' OR rs.status IS NULL)
-			AND (r.updated_at IS NULL OR (r.updated_at BETWEEN ? AND ? + INTERVAL 999 MICROSECOND))
-			AND rs.created_at = (
-				SELECT MAX(created_at)
-				FROM ride_statuses
-				WHERE ride_id = r.id
-			)`
-
-		if err := tx.SelectContext(ctx, &sales, query, owner.ID, since, until); err != nil {
-			return err
+		chairSale := 0
+		for _, ride := range rides {
+			fare := calculateFare(
+				ride.PickupLatitude,
+				ride.PickupLongitude,
+				ride.DestinationLatitude,
+				ride.DestinationLongitude,
+			)
+			chairSale += fare
+			modelSalesMap[chair.Model] += fare
+			res.TotalSales += fare
 		}
 
-		// 集計処理
-		chairSalesMap := make(map[string]*chairSales)
-		modelSalesMap := make(map[string]int)
-		totalSales := 0
-
-		for _, s := range sales {
-			if _, exists := chairSalesMap[s.ChairID]; !exists {
-				chairSalesMap[s.ChairID] = &chairSales{
-					ID:    s.ChairID,
-					Name:  s.ChairName,
-					Sales: 0,
-				}
-			}
-
-			fare := calculateFare(s.PickupLat, s.PickupLon, s.DestLat, s.DestLon)
-			chairSalesMap[s.ChairID].Sales += fare
-			modelSalesMap[s.ChairModel] += fare
-			totalSales += fare
+		if chairSale > 0 {
+			res.Chairs = append(res.Chairs, chairSales{
+				ID:    chair.ID,
+				Name:  chair.Name,
+				Sales: chairSale,
+			})
 		}
+	}
 
-		// レスポンスの構築
-		res := ownerGetSalesResponse{
-			TotalSales: totalSales,
-			Chairs:     make([]chairSales, 0, len(chairSalesMap)),
-			Models:     make([]modelSales, 0, len(modelSalesMap)),
-		}
-
-		for _, cs := range chairSalesMap {
-			res.Chairs = append(res.Chairs, *cs)
-		}
-
-		for model, sales := range modelSalesMap {
+	for model, sales := range modelSalesMap {
+		if sales > 0 {
 			res.Models = append(res.Models, modelSales{
 				Model: model,
 				Sales: sales,
 			})
 		}
+	}
 
-		writeJSON(w, http.StatusOK, res)
-		return nil
-	})
-	if err != nil {
+	if err := tx.Commit(); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
+
+	writeJSON(w, http.StatusOK, res)
 }
 
 type chairWithDetail struct {
