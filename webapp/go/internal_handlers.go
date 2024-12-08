@@ -4,8 +4,34 @@ package main
 import (
 	"database/sql"
 	"errors"
+	"fmt"
+	"log/slog"
 	"net/http"
 )
+
+// キャッシュを使わずに利用可能な椅子を取得
+func getAvailableChairs() ([]Chair, error) {
+	// 椅子のIDと利用可能かどうかを取得、また椅子のモデルからスピードを取得して結合する。
+	// 一旦ひとつだけ最も早いものを取得
+	rows, err := db.Query("SELECT c.id, cl.latitude, cl.longitude, cm.speed FROM chairs c JOIN chair_locations cl ON c.id = cl.chair_id JOIN chair_models cm ON c.model = cm.name WHERE c.is_active = TRUE ORDER BY cm.speed DESC LIMIT 1;")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	availableChairs := []Chair{}
+	for rows.Next() {
+		var chair Chair
+		if err := rows.Scan(&chair.ID, &chair.Speed, &chair.Latitude, &chair.Longitude); err != nil {
+			slog.Debug(fmt.Sprintf("chair: %+v", chair))
+			return nil, err
+		}
+		slog.Debug(fmt.Sprintf("chair: %+v", chair))
+		availableChairs = append(availableChairs, chair)
+	}
+	slog.Debug(fmt.Sprintf("availableChairs: %+v", availableChairs))
+	return availableChairs, nil
+}
 
 // このAPIをインスタンス内から一定間隔で叩かせることで、椅子とライドをマッチングさせる
 func internalGetMatching(w http.ResponseWriter, r *http.Request) {
@@ -21,31 +47,17 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	matched := &Chair{}
-	empty := false
-	for i := 0; i < 10; i++ {
-		if err := db.GetContext(ctx, matched, "SELECT * FROM chairs INNER JOIN (SELECT id FROM chairs WHERE is_active = TRUE ORDER BY RAND() LIMIT 1) AS tmp ON chairs.id = tmp.id LIMIT 1"); err != nil {
-			if errors.Is(err, sql.ErrNoRows) {
-				w.WriteHeader(http.StatusNoContent)
-				return
-			}
-			writeError(w, http.StatusInternalServerError, err)
-		}
-
-		if err := db.GetContext(ctx, &empty, "SELECT COUNT(*) = 0 FROM (SELECT COUNT(chair_sent_at) = 6 AS completed FROM ride_statuses WHERE ride_id IN (SELECT id FROM rides WHERE chair_id = ?) GROUP BY ride_id) is_completed WHERE completed = FALSE", matched.ID); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		if empty {
-			break
-		}
+	chairs, err := getAvailableChairs()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
 	}
-	if !empty {
+	if len(chairs) == 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	if _, err := db.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", matched.ID, ride.ID); err != nil {
+	if _, err := db.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", chairs[0].ID, ride.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
