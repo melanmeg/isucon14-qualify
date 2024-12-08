@@ -50,7 +50,7 @@ func pickBestChair(chairs []Chair, ride *Ride) Chair {
 }
 
 func pickWorstChair(chairs []Chair, ride *Ride) Chair {
-	worstScore := math.MinInt64
+	worstScore := math.MaxInt64
 	worstChair := Chair{}
 
 	for _, chair := range chairs {
