@@ -245,60 +245,41 @@ func ownerGetChairs(w http.ResponseWriter, r *http.Request) {
 	owner := ctx.Value("owner").(*Owner)
 
 	chairs := []chairWithDetail{}
-	// 移動距離計算を最適化したクエリ
+	// シンプルで確実なクエリに変更
 	query := `
-		WITH RECURSIVE chair_locations_with_prev AS (
-			SELECT 
-				cl1.chair_id,
-				cl1.created_at,
-				cl1.latitude,
-				cl1.longitude,
-				@prev_lat := NULL,
-				@prev_lon := NULL,
-				0 as distance
-			FROM chair_locations cl1
-			WHERE cl1.created_at = (
-				SELECT MIN(created_at)
-				FROM chair_locations cl2
-				WHERE cl1.chair_id = cl2.chair_id
-			)
-			UNION ALL
-			SELECT 
-				cl.chair_id,
-				cl.created_at,
-				cl.latitude,
-				cl.longitude,
-				clp.latitude as prev_lat,
-				clp.longitude as prev_lon,
-				CASE 
-					WHEN clp.latitude IS NULL THEN 0
-					ELSE ABS(cl.latitude - clp.latitude) + ABS(cl.longitude - clp.longitude)
-				END as distance
-			FROM chair_locations cl
-			JOIN chair_locations_with_prev clp ON cl.chair_id = clp.chair_id
-			WHERE cl.created_at > clp.created_at
-		)
-		SELECT 
-			c.id,
-			c.owner_id,
-			c.name,
-			c.access_token,
-			c.model,
-			c.is_active,
-			c.created_at,
-			c.updated_at,
-			COALESCE(d.total_distance, 0) as total_distance,
-			d.last_update as total_distance_updated_at
-		FROM chairs c
-		LEFT JOIN (
-			SELECT 
-				chair_id,
-				SUM(distance) as total_distance,
-				MAX(created_at) as last_update
-			FROM chair_locations_with_prev
-			GROUP BY chair_id
-		) d ON c.id = d.chair_id
-		WHERE c.owner_id = ?`
+        SELECT 
+            c.id,
+            c.owner_id,
+            c.name,
+            c.access_token,
+            c.model,
+            c.is_active,
+            c.created_at,
+            c.updated_at,
+            COALESCE(
+                (SELECT SUM(
+                    ABS(curr.latitude - prev.latitude) + 
+                    ABS(curr.longitude - prev.longitude)
+                )
+                FROM chair_locations curr
+                JOIN chair_locations prev 
+                ON curr.chair_id = prev.chair_id
+                AND prev.created_at = (
+                    SELECT MAX(created_at) 
+                    FROM chair_locations 
+                    WHERE chair_id = curr.chair_id 
+                    AND created_at < curr.created_at
+                )
+                WHERE curr.chair_id = c.id
+                ), 0
+            ) as total_distance,
+            (SELECT MAX(created_at) 
+             FROM chair_locations 
+             WHERE chair_id = c.id
+            ) as total_distance_updated_at
+        FROM chairs c
+        WHERE c.owner_id = ?
+        ORDER BY c.created_at DESC`
 
 	if err := db.SelectContext(ctx, &chairs, query, owner.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
