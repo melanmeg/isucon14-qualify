@@ -27,7 +27,7 @@ CREATE TABLE chairs
   id           VARCHAR(26)  NOT NULL COMMENT '椅子ID',
   owner_id     VARCHAR(26)  NOT NULL COMMENT 'オーナーID',
   name         VARCHAR(30)  NOT NULL COMMENT '椅子の名前',
-  model        VARCHAR(50)  NOT NULL COMMENT '椅子のモデル', -- TEXTからVARCHAR(50)に変更（chair_modelsのnameと同じ長さに）
+  model        TEXT         NOT NULL COMMENT '椅子のモデル',
   is_active    TINYINT(1)   NOT NULL COMMENT '配椅子受付中かどうか',
   access_token VARCHAR(255) NOT NULL COMMENT 'アクセストークン',
   created_at   DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '登録日時',
@@ -36,8 +36,7 @@ CREATE TABLE chairs
   INDEX idx_chairs_owner_id (owner_id),
   INDEX idx_chairs_access_token (access_token),
   INDEX idx_chairs_is_active (is_active),
-  INDEX idx_chairs_active_model (is_active, model), -- 追加：アクティブな椅子とモデルの検索用
-  FOREIGN KEY fk_chairs_model (model) REFERENCES chair_models(name) -- 追加：データ整合性のため
+  INDEX idx_chairs_active_model (is_active, model(50))
 )
   COMMENT = '椅子情報テーブル';
 
@@ -52,17 +51,9 @@ CREATE TABLE chair_locations
   PRIMARY KEY (id),
   INDEX idx_chair_locations_chair_id_created_at (chair_id, created_at),
   INDEX idx_chair_locations_coords (latitude, longitude),
-  INDEX idx_chair_locations_created_at (created_at), -- 追加：時系列データ取得の最適化
-  FOREIGN KEY fk_chair_locations_chair_id (chair_id) REFERENCES chairs(id)
+  INDEX idx_chair_locations_created_at (created_at)
 )
-  COMMENT = '椅子の現在位置情報テーブル'
-  PARTITION BY RANGE (UNIX_TIMESTAMP(created_at)) (
-    PARTITION p_old VALUES LESS THAN (UNIX_TIMESTAMP('2024-01-01 00:00:00')),
-    PARTITION p_2024q1 VALUES LESS THAN (UNIX_TIMESTAMP('2024-04-01 00:00:00')),
-    PARTITION p_2024q2 VALUES LESS THAN (UNIX_TIMESTAMP('2024-07-01 00:00:00')),
-    PARTITION p_2024q3 VALUES LESS THAN (UNIX_TIMESTAMP('2024-10-01 00:00:00')),
-    PARTITION p_current VALUES LESS THAN MAXVALUE
-);
+  COMMENT = '子の現在位置情報テーブル';
 
 DROP TABLE IF EXISTS users;
 CREATE TABLE users
@@ -77,9 +68,9 @@ CREATE TABLE users
   created_at      DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '登録日時',
   updated_at      DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新日時',
   PRIMARY KEY (id),
-  UNIQUE idx_users_username (username),
-  UNIQUE idx_users_access_token (access_token),
-  UNIQUE idx_users_invitation_code (invitation_code)
+  UNIQUE (username),
+  UNIQUE (access_token),
+  UNIQUE (invitation_code)
 )
   COMMENT = '利用者情報テーブル';
 
@@ -90,8 +81,7 @@ CREATE TABLE payment_tokens
   token      VARCHAR(255) NOT NULL COMMENT '決済トークン',
   created_at DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '登録日時',
   PRIMARY KEY (user_id),
-  INDEX idx_payment_tokens_user_id_created_at (user_id, created_at),
-  FOREIGN KEY fk_payment_tokens_user_id (user_id) REFERENCES users(id)
+  INDEX idx_payment_tokens_user_id_created_at (user_id, created_at)
 )
   COMMENT = '決済トークンテーブル';
 
@@ -113,9 +103,7 @@ CREATE TABLE rides
   INDEX idx_rides_chair_id_created_at (chair_id, created_at),
   INDEX idx_rides_chair_id_updated_at (chair_id, updated_at),
   INDEX idx_rides_evaluation (chair_id, evaluation),
-  INDEX idx_rides_updated_at (updated_at),
-  FOREIGN KEY fk_rides_user_id (user_id) REFERENCES users(id),
-  FOREIGN KEY fk_rides_chair_id (chair_id) REFERENCES chairs(id)
+  INDEX idx_rides_updated_at (updated_at)
 )
   COMMENT = 'ライド情報テーブル';
 
@@ -133,24 +121,23 @@ CREATE TABLE ride_statuses
   INDEX idx_ride_statuses_ride_id_status (ride_id, status),
   INDEX idx_ride_statuses_status (status),
   INDEX idx_ride_statuses_status_created (status, created_at),
-  INDEX idx_ride_statuses_ride_status_created (ride_id, status, created_at), -- 追加：ステータス検索最適化
-  FOREIGN KEY fk_ride_statuses_ride_id (ride_id) REFERENCES rides(id)
+  INDEX idx_ride_statuses_ride_status_created (ride_id, status, created_at)
 )
   COMMENT = 'ライドステータスの変更履歴テーブル';
 
 DROP TABLE IF EXISTS owners;
 CREATE TABLE owners
 (
-  id                   VARCHAR(26)  NOT NULL COMMENT 'オーーID',
+  id                   VARCHAR(26)  NOT NULL COMMENT 'オーナーID',
   name                 VARCHAR(30)  NOT NULL COMMENT 'オーナー名',
-  access_token         VARCHAR(255) NOT NULL COMMENT 'アクセストークン',
+  access_token         VARCHAR(255) NOT NULL COMMENT 'アクセストーン',
   chair_register_token VARCHAR(255) NOT NULL COMMENT '椅子登録トークン',
   created_at           DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '登録日時',
   updated_at           DATETIME(6)  NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6) COMMENT '更新日時',
   PRIMARY KEY (id),
-  UNIQUE idx_owners_name (name),
-  UNIQUE idx_owners_access_token (access_token),
-  UNIQUE idx_owners_chair_register_token (chair_register_token)
+  UNIQUE (name),
+  UNIQUE (access_token),
+  UNIQUE (chair_register_token)
 )
   COMMENT = '椅子のオーナー情報テーブル';
 
@@ -166,8 +153,6 @@ CREATE TABLE coupons
   INDEX idx_coupons_user_id_used_by (user_id, used_by),
   INDEX idx_coupons_used_by (used_by),
   INDEX idx_coupons_user_created (user_id, created_at),
-  INDEX idx_coupons_user_code_used (user_id, code, used_by), -- 追加：クーポン検索最適化
-  FOREIGN KEY fk_coupons_user_id (user_id) REFERENCES users(id),
-  FOREIGN KEY fk_coupons_used_by (used_by) REFERENCES rides(id)
+  INDEX idx_coupons_user_code_used (user_id, code, used_by)
 )
   COMMENT = 'クーポンテーブル';
