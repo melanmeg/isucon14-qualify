@@ -85,7 +85,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// 基本的に利用可能な椅子がライドよりも少ない場合は何もしないが、一定時間経過した場合はマッチングさせる
-	if len(chairs)-matchingRideCount < 0 && ride.CreatedAt.Add(5*time.Second).After(time.Now()) {
+	if len(chairs)-matchingRideCount < 0 && !ride.CreatedAt.Add(5*time.Second).After(time.Now()) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
