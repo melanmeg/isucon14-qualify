@@ -62,5 +62,10 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if _, err := db.ExecContext(ctx, "UPDATE chairs SET is_active = FALSE WHERE id = ?", chairs[0].ID); err != nil {
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	w.WriteHeader(http.StatusNoContent)
 }
