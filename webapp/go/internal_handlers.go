@@ -71,6 +71,7 @@ func getAvailableChairs() ([]Chair, error) {
 		if err := rows.Scan(&chair.ID, &chair.Speed, &chair.Latituide, &chair.Longtitude); err != nil {
 			return nil, err
 		}
+		availableChairs = append(availableChairs, chair)
 	}
 	return availableChairs, nil
 }
