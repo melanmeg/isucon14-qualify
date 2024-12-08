@@ -12,8 +12,7 @@ import (
 // キャッシュを使わずに利用可能な椅子を取得
 func getAvailableChairs() ([]Chair, error) {
 	// 椅子のIDと利用可能かどうかを取得、また椅子のモデルからスピードを取得して結合する。
-	// 一旦ひとつだけ最も早いものを取得
-	rows, err := db.Query("SELECT c.id, cl.latitude, cl.longitude, cm.speed FROM chairs c JOIN chair_locations cl ON c.id = cl.chair_id JOIN chair_models cm ON c.model = cm.name WHERE c.is_active = TRUE ORDER BY cm.speed DESC LIMIT 1;")
+	rows, err := db.Query("SELECT c.id, cl.latitude, cl.longitude, cm.speed FROM chairs c JOIN chair_locations cl ON c.id = cl.chair_id JOIN chair_models cm ON c.model = cm.name WHERE c.is_active = TRUE ORDER BY cm.speed DESC;")
 	if err != nil {
 		return nil, err
 	}
@@ -31,6 +30,22 @@ func getAvailableChairs() ([]Chair, error) {
 	}
 	slog.Debug(fmt.Sprintf("availableChairs: %+v", availableChairs))
 	return availableChairs, nil
+}
+
+func pickChair(chairs []Chair, ride *Ride) Chair {
+	bestScore := 0
+	bestChair := Chair{}
+
+	for _, chair := range chairs {
+		// 評価関数
+		score := chair.Speed - abs(ride.PickupLatitude-chair.Latitude) - abs(ride.PickupLongitude-chair.Longitude)
+		if score > bestScore {
+			bestScore = score
+			bestChair = chair
+		}
+	}
+
+	return bestChair
 }
 
 // このAPIをインスタンス内から一定間隔で叩かせることで、椅子とライドをマッチングさせる
@@ -56,13 +71,14 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
+	chair := pickChair(chairs, ride)
 
-	if _, err := db.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", chairs[0].ID, ride.ID); err != nil {
+	if _, err := db.ExecContext(ctx, "UPDATE rides SET chair_id = ? WHERE id = ?", chair.ID, ride.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	if _, err := db.ExecContext(ctx, "UPDATE chairs SET is_active = FALSE WHERE id = ?", chairs[0].ID); err != nil {
+	if _, err := db.ExecContext(ctx, "UPDATE chairs SET is_active = FALSE WHERE id = ?", chair.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
