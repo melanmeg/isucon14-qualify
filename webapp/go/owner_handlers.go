@@ -135,87 +135,67 @@ func ownerGetSales(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// チェアとライドを一括で取得
-	type ChairRide struct {
-		ChairID         string `db:"chair_id"`
-		ChairName       string `db:"chair_name"`
-		ChairModel      string `db:"chair_model"`
-		RideID          string `db:"ride_id"`
-		PickupLatitude  int    `db:"pickup_latitude"`
-		PickupLongitude int    `db:"pickup_longitude"`
-		DestLatitude    int    `db:"destination_latitude"`
-		DestLongitude   int    `db:"destination_longitude"`
-	}
-
-	chairRides := []ChairRide{}
-	err = tx.SelectContext(ctx, &chairRides, `
-        SELECT 
-            c.id as chair_id,
-            c.name as chair_name,
-            c.model as chair_model,
-            r.id as ride_id,
-            r.pickup_latitude,
-            r.pickup_longitude,
-            r.destination_latitude,
-            r.destination_longitude
-        FROM chairs c
-        LEFT JOIN rides r ON c.id = r.chair_id
-        LEFT JOIN ride_statuses rs ON r.id = rs.ride_id
-        AND rs.status = 'COMPLETED'
-        AND rs.created_at = (
-            SELECT MAX(created_at)
-            FROM ride_statuses
-            WHERE ride_id = r.id
-        )
-        WHERE c.owner_id = ?
-        AND (r.id IS NULL OR r.updated_at BETWEEN ? AND ?)
-    `, owner.ID, since, until)
-	if err != nil {
+	// まず全ての椅子を取得
+	chairs := []Chair{}
+	if err := tx.SelectContext(ctx, &chairs, "SELECT * FROM chairs WHERE owner_id = ?", owner.ID); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 
-	// 集計処理
-	chairSalesMap := make(map[string]*chairSales)
-	modelSalesMap := make(map[string]int)
-	totalSales := 0
-
-	// まず全ての椅子をマップに入れる
-	for _, cr := range chairRides {
-		if _, exists := chairSalesMap[cr.ChairID]; !exists {
-			chairSalesMap[cr.ChairID] = &chairSales{
-				ID:    cr.ChairID,
-				Name:  cr.ChairName,
-				Sales: 0,
-			}
-		}
-
-		if cr.RideID != "" { // ライドが存在する場合のみ売上計算
-			fare := calculateFare(
-				cr.PickupLatitude,
-				cr.PickupLongitude,
-				cr.DestLatitude,
-				cr.DestLongitude,
-			)
-			chairSalesMap[cr.ChairID].Sales += fare
-			modelSalesMap[cr.ChairModel] += fare
-			totalSales += fare
-		}
-	}
-
-	// レスポンスの構築
 	res := ownerGetSalesResponse{
-		TotalSales: totalSales,
-		Chairs:     make([]chairSales, 0, len(chairSalesMap)),
-		Models:     make([]modelSales, 0, len(modelSalesMap)),
+		TotalSales: 0,
+		Chairs:     make([]chairSales, len(chairs)),
+		Models:     []modelSales{},
 	}
 
-	// 全ての椅子を結果に含める
-	for _, cs := range chairSalesMap {
-		res.Chairs = append(res.Chairs, *cs)
+	modelSalesMap := make(map[string]int)
+
+	// 各椅子ごとに処理
+	for i, chair := range chairs {
+		// 完了したライドを取得
+		rides := []Ride{}
+		query := `
+            SELECT r.* 
+            FROM rides r
+            JOIN (
+                SELECT ride_id
+                FROM ride_statuses
+                WHERE status = 'COMPLETED'
+                GROUP BY ride_id
+            ) rs ON r.id = rs.ride_id
+            WHERE r.chair_id = ?
+            AND r.updated_at BETWEEN ? AND ?`
+
+		if err := tx.SelectContext(ctx, &rides, query, chair.ID, since, until); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		// 売上計算
+		sales := 0
+		for _, ride := range rides {
+			fare := calculateFare(
+				ride.PickupLatitude,
+				ride.PickupLongitude,
+				ride.DestinationLatitude,
+				ride.DestinationLongitude,
+			)
+			sales += fare
+		}
+
+		// 椅子ごとの売上を設定
+		res.Chairs[i] = chairSales{
+			ID:    chair.ID,
+			Name:  chair.Name,
+			Sales: sales,
+		}
+
+		// モデルごとの売上を集計
+		modelSalesMap[chair.Model] += sales
+		res.TotalSales += sales
 	}
 
-	// モデル別売上を結果に含める
+	// モデルごとの売上をレスポンスに追加
 	for model, sales := range modelSalesMap {
 		res.Models = append(res.Models, modelSales{
 			Model: model,
