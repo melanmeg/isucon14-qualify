@@ -63,12 +63,28 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// "MATCHING"状態のライドの数を取得
+	var matchingRideCount int
+	if err := db.GetContext(ctx, &matchingRideCount, "SELECT COUNT(*) AS matching_count FROM (SELECT rs.ride_id FROM ride_statuses rs INNER JOIN (SELECT ride_id, MAX(created_at) AS latest_created_at FROM ride_statuses GROUP BY ride_id) AS sub ON rs.ride_id = sub.ride_id AND rs.created_at = sub.latest_created_at WHERE rs.status = 'MATCHING') AS latest_rides;"); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
 	chairs, err := getAvailableChairs()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
 	if len(chairs) == 0 {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	// 利用可能な椅子がライドよりも少ない場合は何もしない
+	if len(chairs)-matchingRideCount > 0 {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
