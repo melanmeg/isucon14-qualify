@@ -102,7 +102,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	var chair Chair
 
 	// 基本的に利用可能な椅子がライドよりもあまりにも少ない場合はカスみたいな椅子を提供する。
-	if len(chairs)-matchingRideCount < 5 {
+	if len(chairs)-matchingRideCount < (matchingRideCount / 2) {
 		chair = pickWorstChair(chairs, ride)
 	} else {
 		chair = pickBestChair(chairs, ride)
