@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"time"
 )
 
 // キャッシュを使わずに利用可能な椅子を取得
@@ -60,6 +61,12 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeError(w, http.StatusInternalServerError, err)
+		return
+	}
+
+	// 早すぎるマッチングは避ける
+	if ride.CreatedAt.Add(10 * time.Second).After(time.Now()) {
+		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
