@@ -24,6 +24,7 @@ import (
 var db *sqlx.DB
 
 func main() {
+	slog.SetLogLoggerLevel(slog.LevelDebug)
 	mux := setup()
 
 	// DBが初期化されたことを確認
