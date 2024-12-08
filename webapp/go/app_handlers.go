@@ -199,11 +199,29 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	rides := []Ride{}
+	// JOIN を使用して1回のクエリで必要なデータを取得
+	type rideWithStatus struct {
+		Ride
+		Status string `db:"latest_status"`
+	}
+
+	rides := []rideWithStatus{}
 	if err := tx.SelectContext(
 		ctx,
 		&rides,
-		`SELECT * FROM rides WHERE user_id = ? ORDER BY created_at DESC`,
+		`SELECT r.*, rs.status as latest_status 
+         FROM rides r
+         JOIN (
+             SELECT ride_id, status
+             FROM ride_statuses rs1
+             WHERE created_at = (
+                 SELECT MAX(created_at)
+                 FROM ride_statuses rs2
+                 WHERE rs1.ride_id = rs2.ride_id
+             )
+         ) rs ON r.id = rs.ride_id
+         WHERE r.user_id = ?
+         ORDER BY r.created_at DESC`,
 		user.ID,
 	); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
@@ -211,49 +229,90 @@ func appGetRides(w http.ResponseWriter, r *http.Request) {
 	}
 
 	items := []getAppRidesResponseItem{}
+	// チェア情報を一括取得
+	chairMap := make(map[string]*Chair)
+	ownerMap := make(map[string]*Owner)
+
+	var chairIDs []string
 	for _, ride := range rides {
-		status, err := getLatestRideStatus(ctx, tx, ride.ID)
+		if ride.ChairID.Valid {
+			chairIDs = append(chairIDs, ride.ChairID.String)
+		}
+	}
+
+	if len(chairIDs) > 0 {
+		chairs := []Chair{}
+		query, args, err := sqlx.In("SELECT * FROM chairs WHERE id IN (?)", chairIDs)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
-		if status != "COMPLETED" {
+		query = tx.Rebind(query)
+		if err := tx.SelectContext(ctx, &chairs, query, args...); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+
+		var ownerIDs []string
+		for _, chair := range chairs {
+			chairMap[chair.ID] = &chair
+			ownerIDs = append(ownerIDs, chair.OwnerID)
+		}
+
+		// オーナー情報も一括取得
+		owners := []Owner{}
+		query, args, err = sqlx.In("SELECT * FROM owners WHERE id IN (?)", ownerIDs)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		query = tx.Rebind(query)
+		if err := tx.SelectContext(ctx, &owners, query, args...); err != nil {
+			writeError(w, http.StatusInternalServerError, err)
+			return
+		}
+		for _, owner := range owners {
+			ownerMap[owner.ID] = &owner
+		}
+	}
+
+	for _, ride := range rides {
+		if ride.Status != "COMPLETED" {
 			continue
 		}
 
-		fare, err := calculateDiscountedFare(ctx, tx, user.ID, &ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
+		fare, err := calculateDiscountedFare(ctx, tx, user.ID, &ride.Ride, ride.PickupLatitude, ride.PickupLongitude, ride.DestinationLatitude, ride.DestinationLongitude)
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
 			return
 		}
 
 		item := getAppRidesResponseItem{
-			ID:                    ride.ID,
-			PickupCoordinate:      Coordinate{Latitude: ride.PickupLatitude, Longitude: ride.PickupLongitude},
-			DestinationCoordinate: Coordinate{Latitude: ride.DestinationLatitude, Longitude: ride.DestinationLongitude},
-			Fare:                  fare,
-			Evaluation:            *ride.Evaluation,
-			RequestedAt:           ride.CreatedAt.UnixMilli(),
-			CompletedAt:           ride.UpdatedAt.UnixMilli(),
+			ID: ride.ID,
+			PickupCoordinate: Coordinate{
+				Latitude:  ride.PickupLatitude,
+				Longitude: ride.PickupLongitude,
+			},
+			DestinationCoordinate: Coordinate{
+				Latitude:  ride.DestinationLatitude,
+				Longitude: ride.DestinationLongitude,
+			},
+			Fare:        fare,
+			Evaluation:  *ride.Evaluation,
+			RequestedAt: ride.CreatedAt.UnixMilli(),
+			CompletedAt: ride.UpdatedAt.UnixMilli(),
 		}
 
-		item.Chair = getAppRidesResponseItemChair{}
-
-		chair := &Chair{}
-		if err := tx.GetContext(ctx, chair, `SELECT * FROM chairs WHERE id = ?`, ride.ChairID); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
+		if ride.ChairID.Valid {
+			chair := chairMap[ride.ChairID.String]
+			owner := ownerMap[chair.OwnerID]
+			item.Chair = getAppRidesResponseItemChair{
+				ID:    chair.ID,
+				Name:  chair.Name,
+				Model: chair.Model,
+				Owner: owner.Name,
+			}
 		}
-		item.Chair.ID = chair.ID
-		item.Chair.Name = chair.Name
-		item.Chair.Model = chair.Model
-
-		owner := &Owner{}
-		if err := tx.GetContext(ctx, owner, `SELECT * FROM owners WHERE id = ?`, chair.OwnerID); err != nil {
-			writeError(w, http.StatusInternalServerError, err)
-			return
-		}
-		item.Chair.Owner = owner.Name
 
 		items = append(items, item)
 	}
@@ -490,6 +549,7 @@ func appPostRidesEstimatedFare(w http.ResponseWriter, r *http.Request) {
 func calculateDistance(aLatitude, aLongitude, bLatitude, bLongitude int) int {
 	return abs(aLatitude-bLatitude) + abs(aLongitude-bLongitude)
 }
+
 func abs(a int) int {
 	if a < 0 {
 		return -a
