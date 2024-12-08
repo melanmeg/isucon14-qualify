@@ -8,3 +8,6 @@
 !/Makefile
 !/README.md
 !/sample-alp-config.yml
+
+!/.local.env
+!/env.sh
