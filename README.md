@@ -9,7 +9,7 @@ $ ssh-keygen -t ed25519 -C "" -f ~/.ssh/id_ed25519 -N "" && \
   sudo apt update -y
 
 # 適宜、Git管理 `init commit`を実施
-$ git clone https://github.com/melanmeg/isucon14-qualify.git /tmp/GIT_REPO && \
+$ git clone https://github.com/melanmeg/isucon14-qualify.git /tmp/isucon14-qualify && \
   mv /home/isucon/webapp /home/isucon/webapp.bk && \
   mv /tmp/isucon14-qualify/{*,.gitignore,.github,.git} /home/isucon/ && \
   rm -rf /tmp/isucon14-qualify
