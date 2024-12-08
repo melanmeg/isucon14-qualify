@@ -25,6 +25,13 @@ var db *sqlx.DB
 func main() {
 	mux := setup()
 
+	// 初期化処理
+	ctx := context.Background() // コンテキストを作成
+	if err := initializeChairCache(ctx); err != nil {
+		slog.Error("Failed to initialize chair cache", "error", err)
+		os.Exit(1)
+	}
+
 	// pproteinデバッグサーバーを起動
 	go func() {
 		slog.Info("Starting pprotein debug server on :6060")
@@ -139,7 +146,6 @@ func setup() http.Handler {
 	{
 		mux.HandleFunc("GET /api/internal/matching", internalGetMatching)
 	}
-	go initializeChairCache() // キャッシュの初期化
 	return mux
 }
 
