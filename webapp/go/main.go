@@ -2,6 +2,7 @@
 package main
 
 import (
+	"context"
 	crand "crypto/rand"
 	"encoding/json"
 	"fmt"
@@ -34,14 +35,25 @@ func main() {
 	http.ListenAndServe(":8080", mux)
 }
 
-func initializeChairCache() {
-	chairs := []Chair{}
-	if err := db.Select(&chairs, `SELECT * FROM chairs WHERE is_active = TRUE`); err != nil {
-		panic(err)
+func initializeChairCache(ctx context.Context) error {
+	rows, err := db.QueryContext(ctx, "SELECT id, is_active FROM chairs WHERE is_active = TRUE")
+	if err != nil {
+		return err
 	}
-	for _, chair := range chairs {
-		chairCache.Store(chair.ID, chair)
+	defer rows.Close()
+
+	chairCache.mu.Lock()
+	defer chairCache.mu.Unlock()
+
+	chairCache.cache = make(map[string]Chair)
+	for rows.Next() {
+		var chair Chair
+		if err := rows.Scan(&chair.ID, &chair.IsActive); err != nil {
+			return err
+		}
+		chairCache.cache[chair.ID] = chair
 	}
+	return nil
 }
 
 func setup() http.Handler {

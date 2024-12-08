@@ -1,4 +1,4 @@
-// webapp/go/internal_handlers.go
+/internalGetMatching/ webapp/go/internal_handlers.go
 package main
 
 import (
@@ -58,6 +58,8 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if len(chairs) == 0 {
+		// 椅子が見つからない場合にログを記録
+		slog.Error("No available chairs for matching")
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
@@ -77,5 +79,6 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	slog.Info("Matched chair to ride", "ride_id", ride.ID, "chair_id", selectedChair.ID)
 	w.WriteHeader(http.StatusNoContent)
 }
