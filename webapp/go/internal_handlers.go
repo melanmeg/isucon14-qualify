@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 )
 
@@ -33,7 +34,7 @@ func getAvailableChairs() ([]Chair, error) {
 }
 
 func pickChair(chairs []Chair, ride *Ride) Chair {
-	bestScore := 0
+	bestScore := math.MinInt64
 	bestChair := Chair{}
 
 	for _, chair := range chairs {
