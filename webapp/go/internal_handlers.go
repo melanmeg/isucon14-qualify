@@ -56,6 +56,25 @@ func rebuildChairCache(ctx context.Context) error {
 	return nil
 }
 
+// キャッシュを使わずに利用可能な椅子を取得
+func getAvailableChairs() ([]Chair, error) {
+	// 椅子のIDと利用可能かどうかを取得、また椅子のモデルからスピードを取得して結合する。
+	rows, err := db.Query("SELECT c.id, cl.latitude, cl.longitude, cm.speed FROM chairs c JOIN chair_locations cl ON c.id = cl.chair_id JOIN chair_models cm ON c.model = cm.name WHERE c.is_active = 1 ORDER BY cm.speed DESC;")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	availableChairs := []Chair{}
+	for rows.Next() {
+		var chair Chair
+		if err := rows.Scan(&chair.ID, &chair.Speed, &chair.Latituide, &chair.Longtitude); err != nil {
+			return nil, err
+		}
+	}
+	return availableChairs, nil
+}
+
 // 内部マッチング処理
 func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
@@ -72,7 +91,7 @@ func internalGetMatching(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// キャッシュから利用可能な椅子を取得
-	availableChairs, err := getAvailableChairsFromCache()
+	availableChairs, err := getAvailableChairs()
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return

@@ -15,6 +15,11 @@ type Chair struct {
 	AccessToken string    `db:"access_token"`
 	CreatedAt   time.Time `db:"created_at"`
 	UpdatedAt   time.Time `db:"updated_at"`
+
+	// 以下のフィールドはテーブルには存在しないが、他のテーブルから取ってくることができる
+	Speed      int `db:"speed"`
+	Latituide  int `db:"latitude"`
+	Longtitude int `db:"longitude"`
 }
 
 type ChairModel struct {
