@@ -65,92 +65,6 @@ type appGetNearbyChairsResponseChair struct {
 	CurrentCoordinate Coordinate `json:"current_coordinate"`
 }
 
-// システムの混雑状況を判断するための構造体
-type systemStatus struct {
-	ActiveRides       int
-	AvailableChairs   int
-	PendingRidesCount int
-}
-
-// 適切な待ち時間を計算する関数
-func calculateRetryAfterMs(ctx context.Context, tx *sqlx.Tx) (int, error) {
-	var status systemStatus
-
-	// アクティブな配車数を取得
-	if err := tx.GetContext(ctx, &status.ActiveRides, `
-		SELECT COUNT(DISTINCT r.id)
-		FROM rides r
-		JOIN ride_statuses rs ON r.id = rs.ride_id
-		WHERE rs.status NOT IN ('COMPLETED', 'CANCELED')
-		AND rs.created_at = (
-			SELECT MAX(created_at)
-			FROM ride_statuses
-			WHERE ride_id = r.id
-		)`); err != nil {
-		return 0, err
-	}
-
-	// 利用可能な椅子の数を取得
-	if err := tx.GetContext(ctx, &status.AvailableChairs, `
-		SELECT COUNT(*)
-		FROM chairs c
-		WHERE c.is_active = TRUE
-		AND NOT EXISTS (
-			SELECT 1
-			FROM rides r
-			JOIN ride_statuses rs ON r.id = rs.ride_id
-			WHERE r.chair_id = c.id
-			AND rs.status NOT IN ('COMPLETED', 'CANCELED')
-			AND rs.created_at = (
-				SELECT MAX(created_at)
-				FROM ride_statuses
-				WHERE ride_id = r.id
-			)
-		)`); err != nil {
-		return 0, err
-	}
-
-	// 待機中のライド数を取得
-	if err := tx.GetContext(ctx, &status.PendingRidesCount, `
-		SELECT COUNT(*)
-		FROM rides r
-		JOIN ride_statuses rs ON r.id = rs.ride_id
-		WHERE rs.status = 'MATCHING'
-		AND rs.created_at = (
-			SELECT MAX(created_at)
-			FROM ride_statuses
-			WHERE ride_id = r.id
-		)`); err != nil {
-		return 0, err
-	}
-
-	// 基本の待ち時間は1000ms (1秒)
-	baseRetryMs := 1000
-
-	// システムの混雑状況に基づいて待ち時間を調整
-	if status.AvailableChairs == 0 {
-		// 利用可能な椅子がない場合は長めに待つ
-		return baseRetryMs * 5, nil
-	}
-
-	// 待機中のライドと利用可能な椅子の比率に基づいて調整
-	ratio := float64(status.PendingRidesCount) / float64(status.AvailableChairs)
-	switch {
-	case ratio > 2.0:
-		// 非常に混雑している場合
-		return baseRetryMs * 4, nil
-	case ratio > 1.0:
-		// やや混雑している場合
-		return baseRetryMs * 3, nil
-	case ratio > 0.5:
-		// 通常の混雑状態
-		return baseRetryMs * 2, nil
-	default:
-		// 空いている状態
-		return baseRetryMs, nil
-	}
-}
-
 func appGetNearbyChairs(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	latStr := r.URL.Query().Get("latitude")
@@ -182,19 +96,6 @@ func appGetNearbyChairs(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	tx, err := db.Beginx()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-	defer tx.Rollback()
-
-	// retryAfterMs, err := calculateRetryAfterMs(ctx, tx)
-	// if err != nil {
-	// 	writeError(w, http.StatusInternalServerError, err)
-	// 	return
-	// }
-
 	type nearbyChair struct {
 		ID        string `db:"id"`
 		Name      string `db:"name"`
@@ -203,45 +104,42 @@ func appGetNearbyChairs(w http.ResponseWriter, r *http.Request) {
 		Longitude int    `db:"longitude"`
 	}
 
+	// 1つのクエリですべての情報を取得
 	query := `
-		SELECT
-			c.id,
-			c.name,
-			c.model,
-			cl.latitude,
-			cl.longitude
-		FROM chairs c
-		JOIN (
-			SELECT DISTINCT ON (chair_id)
-				chair_id,
-				latitude,
-				longitude,
-				created_at
-			FROM chair_locations
-			ORDER BY chair_id, created_at DESC
-		) cl ON c.id = cl.chair_id
-		LEFT JOIN (
-			SELECT DISTINCT ride_id, chair_id, status
-			FROM ride_statuses rs
-			JOIN rides r ON rs.ride_id = r.id
-			WHERE rs.created_at = (
-				SELECT MAX(created_at)
-				FROM ride_statuses rs2
-				WHERE rs2.ride_id = rs.ride_id
-			)
-		) current_status ON c.id = current_status.chair_id
-		WHERE c.is_active = TRUE
-		AND (current_status.status IS NULL OR current_status.status = 'COMPLETED')
-		AND ABS(cl.latitude - ?) + ABS(cl.longitude - ?) <= ?
-		ORDER BY ABS(cl.latitude - ?) + ABS(cl.longitude - ?)`
+        SELECT
+            c.id,
+            c.name,
+            c.model,
+            cl.latitude,
+            cl.longitude
+        FROM chairs c
+        JOIN (
+            SELECT chair_id, latitude, longitude
+            FROM chair_locations cl1
+            WHERE created_at = (
+                SELECT MAX(created_at)
+                FROM chair_locations cl2
+                WHERE cl1.chair_id = cl2.chair_id
+            )
+        ) cl ON c.id = cl.chair_id
+        WHERE c.is_active = TRUE
+        AND NOT EXISTS (
+            SELECT 1
+            FROM rides r
+            JOIN ride_statuses rs ON r.id = rs.ride_id
+            WHERE r.chair_id = c.id
+            AND rs.status != 'COMPLETED'
+            AND rs.created_at = (
+                SELECT MAX(created_at)
+                FROM ride_statuses
+                WHERE ride_id = r.id
+            )
+        )
+        AND ABS(cl.latitude - ?) + ABS(cl.longitude - ?) <= ?
+    `
 
 	chairs := []nearbyChair{}
-	if err := tx.SelectContext(ctx, &chairs, query, lat, lon, distance, lat, lon); err != nil {
-		writeError(w, http.StatusInternalServerError, err)
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
+	if err := db.SelectContext(ctx, &chairs, query, lat, lon, distance); err != nil {
 		writeError(w, http.StatusInternalServerError, err)
 		return
 	}
