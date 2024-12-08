@@ -35,7 +35,8 @@ CREATE TABLE chairs
   PRIMARY KEY (id),
   INDEX idx_chairs_owner_id (owner_id),
   INDEX idx_chairs_access_token (access_token),
-  INDEX idx_chairs_is_active (is_active)
+  INDEX idx_chairs_is_active (is_active),
+  INDEX idx_chairs_owner_model (owner_id, model(50))  -- モデル別集計の最適化用
 )
   COMMENT = '椅子情報テーブル';
 
@@ -48,7 +49,8 @@ CREATE TABLE chair_locations
   longitude  INTEGER     NOT NULL COMMENT '緯度',
   created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) COMMENT '登録日時',
   PRIMARY KEY (id),
-  INDEX idx_chair_locations_chair_id_created_at (chair_id, created_at)
+  INDEX idx_chair_locations_chair_id_created_at (chair_id, created_at),
+  INDEX idx_chair_locations_coords (latitude, longitude)  -- 位置検索の最適化用
 )
   COMMENT = '椅子の現在位置情報テーブル';
 
@@ -98,7 +100,9 @@ CREATE TABLE rides
   PRIMARY KEY (id),
   INDEX idx_rides_user_id_created_at (user_id, created_at),
   INDEX idx_rides_chair_id_created_at (chair_id, created_at),
-  INDEX idx_rides_chair_id_updated_at (chair_id, updated_at)
+  INDEX idx_rides_chair_id_updated_at (chair_id, updated_at),
+  INDEX idx_rides_evaluation (chair_id, evaluation),  -- 評価集計の最適化用
+  INDEX idx_rides_updated_at (updated_at)  -- 期間指定検索の最適化用
 )
   COMMENT = 'ライド情報テーブル';
 
@@ -114,7 +118,8 @@ CREATE TABLE ride_statuses
   PRIMARY KEY (id),
   INDEX idx_ride_statuses_ride_id_created_at (ride_id, created_at),
   INDEX idx_ride_statuses_ride_id_status (ride_id, status),
-  INDEX idx_ride_statuses_status (status)
+  INDEX idx_ride_statuses_status (status),
+  INDEX idx_ride_statuses_status_created (status, created_at)  -- 状態別検索の最適化用
 )
   COMMENT = 'ライドステータスの変更履歴テーブル';
 
@@ -144,6 +149,7 @@ CREATE TABLE coupons
   used_by    VARCHAR(26)  NULL COMMENT 'クーポンが適用されたライドのID',
   PRIMARY KEY (user_id, code),
   INDEX idx_coupons_user_id_used_by (user_id, used_by),
-  INDEX idx_coupons_used_by (used_by)
+  INDEX idx_coupons_used_by (used_by),
+  INDEX idx_coupons_user_created (user_id, created_at)  -- クーポン付与順の検索最適化用
 )
   COMMENT 'クーポンテーブル';
